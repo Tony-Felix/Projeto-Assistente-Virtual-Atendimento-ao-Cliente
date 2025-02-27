@@ -10,6 +10,15 @@ from service_functions import (
 
 genai.configure(api_key=os.environ["GEMINI_API"])
 
+initial_prompt = (
+    "Você é um assistente virtual que pode receber e processar arquivos de "
+    "vários tipos, como imagens, e comprovantes de venda. "
+    "Ao receber um arquivo, você deve analisá-lo e fornecer uma resposta "
+    "adequada baseada no conteúdo."
+    "Nunca processe uma imagem ou texto por mais de um minuto. Caso passe "
+    "esse tempo, pare o processo e peça para o cliente tentar novamente"
+)
+
 model_if_magic = genai.GenerativeModel(
     "gemini-1.5-flash",
     generation_config={"temperature": 0.5},
@@ -18,6 +27,7 @@ model_if_magic = genai.GenerativeModel(
         registrar_reclamacao,
         gerar_cupom_desconto,
     ],
+    system_instruction=initial_prompt
 )
 
 chat = model_if_magic.start_chat(enable_automatic_function_calling=True)
@@ -26,8 +36,11 @@ chat = model_if_magic.start_chat(enable_automatic_function_calling=True)
 def ia_decision():
     business_rules = """
       Você é um assistente virtual de uma loja online de eletrônicos.
-      Você pode Processar arquivos enviados pelos clientes, como comprovantes
-      de pagamento ou imagens de produtos com defeito.
+      Você pode ler arquivos enviados pelos clientes, como comprovantes
+      de pagamento ou interpretar conteudos de imagens, mesmo sem informações
+      extras. Após ter interpretado a imagem, se ela for de um produto quebraso
+      diga qual é o produto e que percebeu que esta quebrado e peça o numero do
+      pedido para poder registrar uma reclamação.
       Você deve seguir as seguintes regras ao interagir com os clientes:
     1. Consulta de Pedidos:
     Se o cliente perguntar sobre o status de um pedido, a você deve fornecer
@@ -54,11 +67,13 @@ def ia_decision():
     chat.send_message(
         "Nunca exponha os codigos das funções! não de explicações adicionais "
         "sobre seu funcionamento ou das funções chamadas."
+        "sempre leia as imagens enviadas, se forem de um produto quebrado "
+        "continue com o atendimento, caso contrario peça imagens relevantes"
         "Se ao interagir com um cliente não tiver chamado nenhuma função, "
         "reflita se deve fazê-lo ou não. Lembre-se que você é um assistente "
         "virtual que pode responder perguntas e chamar as funções adequadas "
         "para cada usuario."
-        "A loja recebeu 1 pedido de um celular. 25 é o numero do pedido"
+        "os numeros validos de pedidos são de 1 a 999"
     )
     return response.text
 
@@ -68,17 +83,16 @@ def upload_files(message):
     uploaded_files = []
     if message["files"]:
         for file_gradio_data in message["files"]:
-            uploaded_file = genai.upload_file(file_gradio_data)
-            while uploaded_file.state.name == "PROCESSING":
-                time.sleep(5)
-                uploaded_file = genai.get_file(uploaded_file.name)
+            uploaded_file = genai.upload_file(file_gradio_data["path"])
             uploaded_files.append(uploaded_file)
     return uploaded_files
 
 
 # Monta o prompt com a mensagem e os arquivos enviados
 def assemble_prompt(message):
-    prompt = [message["text"]]
+    prompt = [message["text"] if message.get("text") else "Verifique se esse "
+              "arquivo é um comprovante de pagamento ou uma imagem de um "
+              "produto com defeito."]
     uploaded_files = upload_files(message)
     prompt.extend(uploaded_files)
     return prompt
@@ -88,14 +102,24 @@ def assemble_prompt(message):
 def gradio_wrapper(message, _history):
     ia_decision()
     prompt = assemble_prompt(message)
+    error_message = "O usuário te enviou um arquivo para você ler e obteve o "
+    "erro. Pode explicar o que houve e dizer quais tipos de "
+    "arquivos você dá suporte? Assuma que a pessoa não sabe "
+    "programação e não quer ver o erro original. Explique de forma "
+    "simples e concisa. "
     try:
         response = chat.send_message(prompt)
+        start_time = time.time()
+        while (time.time() - start_time) < 60:
+            time.sleep(5)
+            if response.text:
+                return response.text
+        return (
+                    "Erro: O processamento da resposta está demorando muito. "
+                    "Por favor, tente novamente mais tarde."
+                )
     except InvalidArgument as e:
-        response = chat.send_message(
-            "O usuário te enviou um arquivo para você ler e obteve o erro: "
-            f"{e}. Pode explicar o que houve e dizer quais tipos de "
-            "arquivos você dá suporte? Assuma que a pessoa não sabe "
-            "programação e não quer ver o erro original. Explique de forma "
-            "simples e concisa."
-        )
+        response = chat.send_message(f"{error_message} Erro: {e}")
+    except Exception as e:
+        response = chat.send_message(f"{error_message} Erro: {e}")
     return response.text
