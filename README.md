@@ -1,5 +1,3 @@
-# Assistente-Virtual-Atendimento-ao-Cliente
-
 # Chatbot! 💬 Assistente Virtual 💬
 
 Este projeto implementa um chatbot interativo utilizando o poder do Google Gemini para fornecer respostas inteligentes e suporte multimodal (texto e arquivos). A interface do chatbot é construída com Gradio, e a aplicação web principal é gerenciada com Flask.
